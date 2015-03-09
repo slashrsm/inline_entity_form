@@ -7,9 +7,9 @@
 namespace Drupal\inline_entity_form\InlineEntityForm;
 
 use Drupal\Component\Utility\NestedArray;
-use Drupal\Core\Entity\EntityForm;
 use Drupal\Core\Entity\EntityFormInterface;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Form\FormState;
 use Drupal\Core\Form\FormStateInterface;
@@ -20,7 +20,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 /**
  * Generic entity inline form handler.
  */
-class EntityInlineEntityFormHandler extends EntityForm implements InlineEntityFormHandlerInterface {
+class EntityInlineEntityFormHandler implements InlineEntityFormHandlerInterface {
 
   /**
    * Entity manager service.
@@ -65,7 +65,7 @@ class EntityInlineEntityFormHandler extends EntityForm implements InlineEntityFo
   /**
    * {@inheritdoc}
    */
-  public static function create(ContainerInterface $container) {
+  public static function createInstance(ContainerInterface $container, EntityTypeInterface $entity_type) {
     return new static(
       $container->get('entity.manager'),
       $container->get('module_handler')
@@ -218,15 +218,8 @@ class EntityInlineEntityFormHandler extends EntityForm implements InlineEntityFo
 
     $form_state->set('field', $child_form_state->get('field'));
 
-    $this->buildFormActions($entity_form);
-    $this->addSubmitHandlers($entity_form);
-
-    $entity_form['#element_validate'][] = 'inline_entity_form_entity_form_validate';
+    $entity_form['#element_validate'][] = [get_class($this), 'entityFormValidate'];
     $entity_form['#ief_element_submit'][] = 'inline_entity_form_entity_form_submit';
-    // Add the pre_render callback that powers the #fieldset form element key,
-    // which moves the element to the specified fieldset without modifying its
-    // position in $form_state['values'].
-    $entity_form['#pre_render'][] = 'inline_entity_form_pre_render_add_fieldset_markup';
 
     // Allow other modules to alter the form.
     $this->moduleHandler->alter('inline_entity_form_entity_form', $entity_form, $form_state);
@@ -237,12 +230,26 @@ class EntityInlineEntityFormHandler extends EntityForm implements InlineEntityFo
   /**
    * {@inheritdoc}
    */
-  public function entityFormValidate($entity_form, FormStateInterface $form_state) {
-    /*
-    $info = \Drupal::entityManager()->getDefinition($this->entityType);
+  public static function entityFormValidate($entity_form, FormStateInterface $form_state) {
+    /** @var \Drupal\Core\Entity\EntityInterface $entity */
     $entity = $entity_form['#entity'];
-    $form_state['form_display']->validateFormValues($entity, $entity_form, $form_state);
-    */
+
+    /** @var \Drupal\Core\Entity\Display\EntityFormDisplayInterface $form_display */
+    $form_display = \Drupal::entityManager()->getStorage('entity_form_display')->load($entity->getEntityTypeId() . '.' . $entity->bundle() . '.default');
+    $form_display->validateFormValues($entity, $entity_form, $form_state);
+
+    // Unset un-triggered conditional fields errors
+    $errors = $form_state->getErrors();
+    $conditional_fields_untriggered_dependents = $form_state->get('conditional_fields_untriggered_dependents');
+    if ($errors && !empty($conditional_fields_untriggered_dependents)) {
+      foreach ($conditional_fields_untriggered_dependents as $untriggered_dependents ) {
+        if (!empty($untriggered_dependents['errors'])) {
+          foreach (array_keys($untriggered_dependents['errors']) as $key) {
+            unset($errors[$key]);
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -373,87 +380,6 @@ class EntityInlineEntityFormHandler extends EntityForm implements InlineEntityFo
   }
 
   /**
-   * Adds actions to the inline entity form.
-   *
-   * @param array $form
-   *   Form array structure.
-   */
-  protected function buildFormActions(&$form) {
-    $labels = $this->labels();
-    // Build a delta suffix that's appended to button #name keys for uniqueness.
-    $delta = $form['#ief_id'];
-    if ($form['#op'] == 'add') {
-      $save_label = t('Create @type_singular', ['@type_singular' => $labels['singular']]);
-    }
-    else {
-      $delta .= '-' . $form['#ief_row_delta'];
-      $save_label = t('Update @type_singular', ['@type_singular' => $labels['singular']]);
-    }
-
-    $form['actions'] = [
-      '#type' => 'container',
-      '#weight' => 100,
-    ];
-    $form['actions']['ief_' . $form['#op'] . '_save'] = [
-      '#type' => 'submit',
-      '#value' => $save_label,
-      '#name' => 'ief-' . $form['#op'] . '-submit-' . $delta,
-      '#limit_validation_errors' => [$form['#parents']],
-      '#attributes' => ['class' => ['ief-entity-submit']],
-      '#ajax' => [
-        'callback' => 'inline_entity_form_get_element',
-        'wrapper' => 'inline-entity-form-' . $form['#ief_id'],
-      ],
-    ];
-    $form['actions']['ief_' . $form['#op'] . '_cancel'] = [
-      '#type' => 'submit',
-      '#value' => t('Cancel'),
-      '#name' => 'ief-' . $form['#op'] . '-cancel-' . $delta,
-      '#limit_validation_errors' => [],
-      '#ajax' => [
-        'callback' => 'inline_entity_form_get_element',
-        'wrapper' => 'inline-entity-form-' . $form['#ief_id'],
-      ],
-    ];
-  }
-
-  /**
-   * Adds submit handlers to the inline entity form.
-   *
-   * @param array $form
-   *   Form array structure.
-   */
-  protected function addSubmitHandlers(&$form) {
-    if ($form['#op'] == 'add') {
-      $form['actions']['ief_add_save']['#submit'] = [
-        'inline_entity_form_trigger_submit',
-        'inline_entity_form_close_child_forms',
-        'inline_entity_form_close_form',
-      ];
-      $form['actions']['ief_add_cancel']['#submit'] = [
-        'inline_entity_form_close_child_forms',
-        'inline_entity_form_close_form',
-        'inline_entity_form_cleanup_form_state',
-      ];
-    }
-    else {
-      $form['actions']['ief_edit_save']['#ief_row_delta'] = $form['#ief_row_delta'];
-      $form['actions']['ief_edit_cancel']['#ief_row_delta'] = $form['#ief_row_delta'];
-
-      $form['actions']['ief_edit_save']['#submit'] = [
-        'inline_entity_form_trigger_submit',
-        'inline_entity_form_close_child_forms',
-        'inline_entity_form_close_row_form',
-      ];
-      $form['actions']['ief_edit_cancel']['#submit'] = [
-        'inline_entity_form_close_child_forms',
-        'inline_entity_form_close_row_form',
-        'inline_entity_form_cleanup_row_form_state',
-      ];
-    }
-  }
-
-  /**
    * "Creates" entity that is being edited/created in inline form.
    *
    * Entity will either be created (when creating) or loaded form form state
@@ -486,4 +412,5 @@ class EntityInlineEntityFormHandler extends EntityForm implements InlineEntityFo
       return $form_state->get(['inline_entity_form', $form['#ief_id'], 'entities', $form['#ief_row_delta'], 'entity']);
     }
   }
+
 }
