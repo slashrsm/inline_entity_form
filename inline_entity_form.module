@@ -265,46 +265,6 @@ function inline_entity_form_update_row_weights($element, FormStateInterface $for
 }
 
 /**
- * Submits an entity form.
- *
- * Note that at this point the entity is not yet saved, since the user might
- * still decide to cancel the parent form.
- *
- * @param $entity_form
- *  The form of the entity being managed inline.
- * @param $form_state
- *   The form state of the parent form.
- */
-function inline_entity_form_entity_form_submit($entity_form, FormStateInterface $form_state) {
-  $ief_id = $entity_form['#ief_id'];
-  $entity = $entity_form['#entity'];
-
-  if ($entity_form['#op'] == 'add') {
-    // Determine the correct weight of the new element.
-    $weight = 0;
-    $entities = $form_state->get(['inline_entity_form', $ief_id, 'entities']);
-    if (!empty($entities)) {
-      $weight = max(array_keys($entities)) + 1;
-    }
-    // Add the entity to form state, mark it for saving, and close the form.
-    $entities[] = array(
-      'entity' => $entity,
-      '_weight' => $weight,
-      'form' => NULL,
-      'needs_save' => TRUE,
-    );
-    $form_state->set(['inline_entity_form', $ief_id, 'entities'], $entities);
-  }
-  else {
-    $delta = $entity_form['#ief_row_delta'];
-    $entities = $form_state->get(['inline_entity_form', $ief_id, 'entities']);
-    $entities[$delta]['entity'] = $entity;
-    $entities[$delta]['needs_save'] = TRUE;
-    $form_state->set(['inline_entity_form', $ief_id, 'entities'], $entities);
-  }
-}
-
-/**
  * Provides the form for adding existing entities through an autocomplete field.
  *
  * @param $entity_form

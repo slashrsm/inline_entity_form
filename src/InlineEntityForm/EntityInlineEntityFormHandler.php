@@ -159,7 +159,6 @@ class EntityInlineEntityFormHandler implements InlineEntityFormHandlerInterface 
 
     $entity_form['#ief_element_submit'][] = [get_class($this), 'entityFormSubmit'];
     $entity_form['#ief_element_submit'][] = [get_class($this), 'submitCleanFormState'];
-    $entity_form['#ief_element_submit'][] = 'inline_entity_form_entity_form_submit';
 
     // Allow other modules to alter the form.
     $this->moduleHandler->alter('inline_entity_form_entity_form', $entity_form, $form_state);
